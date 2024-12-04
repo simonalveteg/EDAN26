@@ -13,6 +13,9 @@ case class Flow(f: Int)
 case class Debug(debug: Boolean)
 case class Control(control:ActorRef)
 case class Source(n: Int)
+case class Push(incomingHeight: Int, index: Int, d: Int)
+case class Nack(index: Int, d: Int)
+case class Outflow(f:Int)
 
 case object Print
 case object Start
@@ -20,19 +23,22 @@ case object Excess
 case object Maxflow
 case object Sink
 case object Hello
+case object Ack
 
 class Edge(var u: ActorRef, var v: ActorRef, var c: Int) {
 	var	f = 0
 }
 
 class Node(val index: Int) extends Actor {
-	var	e = 0;				/* excess preflow. 						*/
-	var	h = 0;				/* height. 							*/
+	var	excess = 0;				/* excess preflow. 						*/
+	var	height = 0;				/* height. 							*/
 	var	control:ActorRef = null		/* controller to report to when e is zero. 			*/
 	var	source:Boolean	= false		/* true if we are the source.					*/
 	var	sink:Boolean	= false		/* true if we are the sink.					*/
-	var	edge: List[Edge] = Nil		/* adjacency list with edge objects shared with other nodes.	*/
-	var	debug = false			/* to enable printing.						*/
+	var	edgeList: List[Edge] = Nil		/* adjacency list with edge objects shared with other nodes.	*/
+	var	debug = true			/* to enable printing.						*/
+  var k = 0 // How many edges we have tried to push to.
+  var pendingRequests = 0 // how many push requests we have sent.
 	
 	def min(a:Int, b:Int) : Int = { if (a < b) a else b }
 
@@ -40,35 +46,156 @@ class Node(val index: Int) extends Actor {
 
 	def other(a:Edge, u:ActorRef) : ActorRef = { if (u == a.u) a.v else a.u }
 
-	def status: Unit = { if (debug) println(id + " e = " + e + ", h = " + h) }
+	def status: Unit = { if (debug) println(id + " e = " + excess + ", h = " + height) }
 
-	def enter(func: String): Unit = { if (debug) { println(id + " enters " + func); status } }
-	def exit(func: String): Unit = { if (debug) { println(id + " exits " + func); status } }
+	def enter(func: String): Unit = { if (debug) { println(id + " enters " + func); status  } }
+	def exit(func: String): Unit = { if (debug) { println(id + " exits " + func); status }  }
 
-	def relabel : Unit = {
+	def relabel() : Unit = {
 
 		enter("relabel")
 
-		h += 1
+		height += 1
 
 		exit("relabel")
 	}
 
+  def push(e: Edge, index: Int) : Unit = {
+    enter("push")
+    var d = 0 // delta
+
+    if (self == e.u) {
+      d = min(excess, e.c - e.f)
+      if (d != 0) {
+        println(s"${id} Pushing ${d}")
+        e.f += d
+        e.v ! Push(height, index, d)
+        pendingRequests += 1
+        excess -= d
+      }
+    } else {
+      d = min(excess, e.c + e.f)
+      if (d !=0) {
+        println(s"${id} Pushing ${d}")
+        e.f -= d
+        e.u ! Push(height, index, d)
+        pendingRequests += 1
+        excess -= d
+      }
+    }
+
+    
+    exit("push")
+  }
+
+  def discharge() : Unit = {
+    enter("discharge")
+    println(s"k = ${k}, edgeListSize = ${edgeList.size}")
+    if (sink) return
+    // loopa igenom edges, skicka maximal mängd, spara index i k
+    if (k == edgeList.size) {
+      if (pendingRequests > 0) return // we have shit to wait for
+      k = 0
+      if (!source) {
+        relabel()
+      }
+    }
+    for (index <- edgeList.indices) {
+      if (excess > 0 && index >= k) {
+        push(edgeList(index), index)
+        k = index + 1
+      }
+    }
+    exit("discharge")
+  }
+
 	def receive = {
+
+  case Start => {
+    enter("start")
+    // Set excess to sum of edge capacity.
+    for (e <- edgeList) {
+      excess += e.c
+    }
+    // Push max flow on all edges.
+    for (index <- edgeList.indices) {
+      push(edgeList(index), index)
+    }
+    exit("start")
+  }
 
 	case Debug(debug: Boolean)	=> this.debug = debug
 
 	case Print => status
 
-	case Excess => { sender ! Flow(e) /* send our current excess preflow to actor that asked for it. */ }
+	case Excess => { sender ! Flow(excess) /* send our current excess preflow to actor that asked for it. */ }
 
-	case edge:Edge => { this.edge = edge :: this.edge /* put this edge first in the adjacency-list. */ }
+	case edge:Edge => { this.edgeList = edge :: this.edgeList /* put this edge first in the adjacency-list. */ }
 
 	case Control(control:ActorRef)	=> this.control = control
 
+  case Push(incomingHeight: Int, index: Int, d: Int) => {
+    println(s"${id} received push request")
+    // jämför höjd, svara med Ack eller Nack
+    if (incomingHeight > height) {
+      excess += d
+      sender ! Ack
+      if (sink) {
+        control ! Flow(excess)
+      } else {
+        discharge()
+      }
+      if (source) {
+        var outflow = 0
+        for (e <- edgeList) {
+          outflow += e.f
+        }
+        control ! Outflow(outflow)
+      }
+    } else {
+      sender ! Nack(index, d)
+    }
+  }
+
 	case Sink	=> { sink = true }
 
-	case Source(n:Int)	=> { h = n; source = true }
+  case Ack => {
+    println(s"${id} Received Ack")
+    pendingRequests -= 1
+    if (source) {
+      var outflow = 0
+      for (e <- edgeList) {
+        outflow += e.f
+      }
+      control ! Outflow(outflow)
+    }
+  }
+
+  case Nack(index: Int, d: Int) => {
+    println(s"${id} Received Nack")
+    val e = edgeList(index)
+
+    if (self == e.u) {
+      e.f -= d
+    } else {
+      e.f += d
+    }
+    if (source) {
+      var outflow = 0
+      for (e <- edgeList) {
+        outflow += e.f
+      }
+      control ! Outflow(outflow)
+    }
+
+    // assert(math.abs(e.f) > e.c)
+
+    pendingRequests -= 1
+    excess += d
+    discharge()
+  }
+
+	case Source(n:Int)	=> { height = n; source = true }
 
 	case _		=> {
 		println("" + index + " received an unknown message" + _) }
@@ -87,6 +214,15 @@ class Preflow extends Actor
 	var	edge:Array[Edge]	= null	/* edges in the graph.						*/
 	var	node:Array[ActorRef]	= null	/* vertices in the graph.					*/
 	var	ret:ActorRef 		= null	/* Actor to send result to.					*/
+  var outflow = 0 // flow out from source
+  var sinkExcess = 0 // excess at sink
+  
+  def isDone() {
+    println(s"Is Done? Sink excess: ${sinkExcess}, Source ouflow: ${outflow}")
+    if (outflow == sinkExcess) {
+      ret ! sinkExcess
+    }
+  }
 
 	def receive = {
 
@@ -101,19 +237,29 @@ class Preflow extends Actor
 
 	case edge:Array[Edge] => this.edge = edge
 
+  case Outflow(f:Int) => {
+    outflow = f
+    isDone()
+  }
+
 	case Flow(f:Int) => {
-		ret ! f			/* somebody (hopefully the sink) told us its current excess preflow. */
+    sinkExcess = f
+    isDone()
+		// ret ! f			/* somebody (hopefully the sink) told us its current excess preflow. */
 	}
 
 	case Maxflow => {
 		ret = sender
-
-		node(t) ! Excess	/* ask sink for its excess preflow (which certainly still is zero). */
+    node(s) ! Source(n)
+    node(t) ! Sink
+    node(s) ! Start
+		// node(t) ! Excess	/* ask sink for its excess preflow (which certainly still is zero). */
 	}
 	}
 }
 
 object main extends App {
+	// implicit val t = Timeout(60 seconds);
 	implicit val t = Timeout(4 seconds);
 
 	val	begin = System.currentTimeMillis()
