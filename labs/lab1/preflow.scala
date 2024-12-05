@@ -9,7 +9,7 @@ import scala.concurrent.duration._
 import scala.language.postfixOps
 import scala.io._
 
-case class Flow(f: Int)
+case class Inflow(f: Int)
 case class Debug(debug: Boolean)
 case class Control(control:ActorRef)
 case class Source(n: Int)
@@ -36,7 +36,7 @@ class Node(val index: Int) extends Actor {
 	var	source:Boolean	= false		/* true if we are the source.					*/
 	var	sink:Boolean	= false		/* true if we are the sink.					*/
 	var	edgeList: List[Edge] = Nil		/* adjacency list with edge objects shared with other nodes.	*/
-	var	debug = true			/* to enable printing.						*/
+	var	debug = false			/* to enable printing.						*/
   var k = 0 // How many edges we have tried to push to.
   var pendingRequests = 0 // how many push requests we have sent.
 	
@@ -50,6 +50,8 @@ class Node(val index: Int) extends Actor {
 
 	def enter(func: String): Unit = { if (debug) { println(id + " enters " + func); status  } }
 	def exit(func: String): Unit = { if (debug) { println(id + " exits " + func); status }  }
+
+  def dbprint(string: String): Unit = { if (debug) { println(id + " " + string); status } }
 
 	def relabel() : Unit = {
 
@@ -67,7 +69,7 @@ class Node(val index: Int) extends Actor {
     if (self == e.u) {
       d = min(excess, e.c - e.f)
       if (d != 0) {
-        println(s"${id} Pushing ${d}")
+        dbprint(s"Pushing ${d}")
         e.f += d
         e.v ! Push(height, index, d)
         pendingRequests += 1
@@ -75,8 +77,8 @@ class Node(val index: Int) extends Actor {
       }
     } else {
       d = min(excess, e.c + e.f)
-      if (d !=0) {
-        println(s"${id} Pushing ${d}")
+      if (d != 0) {
+        dbprint(s"Pushing ${d}")
         e.f -= d
         e.u ! Push(height, index, d)
         pendingRequests += 1
@@ -89,8 +91,7 @@ class Node(val index: Int) extends Actor {
   }
 
   def discharge() : Unit = {
-    enter("discharge")
-    println(s"k = ${k}, edgeListSize = ${edgeList.size}")
+    enter(s"discharge. k = ${k}, edgeListSize = ${edgeList.size}")
     if (sink) return
     // loopa igenom edges, skicka maximal mängd, spara index i k
     if (k == edgeList.size) {
@@ -102,6 +103,7 @@ class Node(val index: Int) extends Actor {
     }
     for (index <- edgeList.indices) {
       if (excess > 0 && index >= k) {
+        dbprint(s"Try push to edge ${index}")
         push(edgeList(index), index)
         k = index + 1
       }
@@ -114,12 +116,19 @@ class Node(val index: Int) extends Actor {
   case Start => {
     enter("start")
     // Set excess to sum of edge capacity.
-    for (e <- edgeList) {
-      excess += e.c
-    }
+    // for (e <- edgeList) {
+    //   excess += e.c
+    // }
     // Push max flow on all edges.
     for (index <- edgeList.indices) {
-      push(edgeList(index), index)
+      var e = edgeList(index)
+      excess -= e.c
+      if (self == e.u) {
+        e.f += e.c
+      } else {
+        e.f -= e.c
+      }
+      e.v ! Push(height, index, e.c)
     }
     exit("start")
   }
@@ -128,31 +137,29 @@ class Node(val index: Int) extends Actor {
 
 	case Print => status
 
-	case Excess => { sender ! Flow(excess) /* send our current excess preflow to actor that asked for it. */ }
+	// case Excess => { sender ! Flow(excess) /* send our current excess preflow to actor that asked for it. */ }
 
 	case edge:Edge => { this.edgeList = edge :: this.edgeList /* put this edge first in the adjacency-list. */ }
 
 	case Control(control:ActorRef)	=> this.control = control
 
   case Push(incomingHeight: Int, index: Int, d: Int) => {
-    println(s"${id} received push request")
+    // println(s"Received push request. Excess: ${excess}, Incoming: ${d}")
     // jämför höjd, svara med Ack eller Nack
     if (incomingHeight > height) {
       excess += d
+      dbprint("Sending Ack")
       sender ! Ack
+      if (source) {
+        control ! Inflow(excess)
+      }
       if (sink) {
-        control ! Flow(excess)
+        control ! Outflow(excess)
       } else {
         discharge()
       }
-      if (source) {
-        var outflow = 0
-        for (e <- edgeList) {
-          outflow += e.f
-        }
-        control ! Outflow(outflow)
-      }
     } else {
+      dbprint("Sending Nack")
       sender ! Nack(index, d)
     }
   }
@@ -160,19 +167,16 @@ class Node(val index: Int) extends Actor {
 	case Sink	=> { sink = true }
 
   case Ack => {
-    println(s"${id} Received Ack")
+    dbprint("Received Ack")
     pendingRequests -= 1
     if (source) {
-      var outflow = 0
-      for (e <- edgeList) {
-        outflow += e.f
-      }
-      control ! Outflow(outflow)
+      control ! Inflow(excess)
     }
+    discharge()
   }
 
   case Nack(index: Int, d: Int) => {
-    println(s"${id} Received Nack")
+    dbprint("Received Nack")
     val e = edgeList(index)
 
     if (self == e.u) {
@@ -181,11 +185,7 @@ class Node(val index: Int) extends Actor {
       e.f += d
     }
     if (source) {
-      var outflow = 0
-      for (e <- edgeList) {
-        outflow += e.f
-      }
-      control ! Outflow(outflow)
+      control ! Inflow(excess)
     }
 
     // assert(math.abs(e.f) > e.c)
@@ -214,13 +214,13 @@ class Preflow extends Actor
 	var	edge:Array[Edge]	= null	/* edges in the graph.						*/
 	var	node:Array[ActorRef]	= null	/* vertices in the graph.					*/
 	var	ret:ActorRef 		= null	/* Actor to send result to.					*/
-  var outflow = 0 // flow out from source
-  var sinkExcess = 0 // excess at sink
+  var inflow = 0 // flow out from source
+  var outflow = 0 // excess at sink
   
   def isDone() {
-    println(s"Is Done? Sink excess: ${sinkExcess}, Source ouflow: ${outflow}")
-    if (outflow == sinkExcess) {
-      ret ! sinkExcess
+    // println(s"Is Done? Flow out: ${outflow}, Flow in: ${inflow}")
+    if (math.abs(inflow) == outflow) {
+      ret ! outflow
     }
   }
 
@@ -242,10 +242,9 @@ class Preflow extends Actor
     isDone()
   }
 
-	case Flow(f:Int) => {
-    sinkExcess = f
+	case Inflow(f:Int) => {
+    inflow = f
     isDone()
-		// ret ! f			/* somebody (hopefully the sink) told us its current excess preflow. */
 	}
 
 	case Maxflow => {
@@ -259,8 +258,8 @@ class Preflow extends Actor
 }
 
 object main extends App {
-	// implicit val t = Timeout(60 seconds);
-	implicit val t = Timeout(4 seconds);
+	implicit val t = Timeout(300 seconds);
+	// implicit val t = Timeout(4 seconds);
 
 	val	begin = System.currentTimeMillis()
 	val system = ActorSystem("Main")
