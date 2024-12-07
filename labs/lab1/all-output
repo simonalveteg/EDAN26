@@ -1,3 +1,55 @@
 copying runtime jar...
 [info] welcome to sbt 1.3.13 (N/A Java 17.0.11)
 [info] loading project definition from /home/skarv/repos/EDAN26/labs/lab1/project
+[info] loading settings for project lab1 from build.sbt ...
+[info] running main 
+17:07:20.566 [Main-akka.actor.default-dispatcher-4] INFO akka.event.slf4j.Slf4jLogger - Slf4jLogger started
+Is Done? Flow out: 0, Flow in: -268
+Is Done? Flow out: 0, Flow in: -268
+Is Done? Flow out: 0, Flow in: -268
+Is Done? Flow out: 0, Flow in: -268
+Is Done? Flow out: 0, Flow in: -268
+Is Done? Flow out: 0, Flow in: -268
+Is Done? Flow out: 63, Flow in: -268
+Is Done? Flow out: 135, Flow in: -268
+Is Done? Flow out: 142, Flow in: -268
+Is Done? Flow out: 166, Flow in: -268
+Is Done? Flow out: 183, Flow in: -268
+Is Done? Flow out: 202, Flow in: -268
+Is Done? Flow out: 209, Flow in: -268
+Is Done? Flow out: 211, Flow in: -268
+Is Done? Flow out: 215, Flow in: -268
+Is Done? Flow out: 240, Flow in: -268
+Is Done? Flow out: 254, Flow in: -268
+Is Done? Flow out: 263, Flow in: -268
+Is Done? Flow out: 264, Flow in: -268
+Is Done? Flow out: 269, Flow in: -268
+[error] (run-main-0) java.util.concurrent.TimeoutException: Future timed out after [4 seconds]
+[error] java.util.concurrent.TimeoutException: Future timed out after [4 seconds]
+[error] 	at scala.concurrent.impl.Promise$DefaultPromise.tryAwait0(Promise.scala:212)
+[error] 	at scala.concurrent.impl.Promise$DefaultPromise.result(Promise.scala:225)
+[error] 	at scala.concurrent.Await$.$anonfun$result$1(package.scala:201)
+[error] 	at scala.concurrent.BlockContext$DefaultBlockContext$.blockOn(BlockContext.scala:62)
+[error] 	at scala.concurrent.Await$.result(package.scala:124)
+[error] 	at main$.delayedEndpoint$main$1(preflow.scala:313)
+[error] 	at main$delayedInit$body.apply(preflow.scala:268)
+[error] 	at scala.Function0.apply$mcV$sp(Function0.scala:39)
+[error] 	at scala.Function0.apply$mcV$sp$(Function0.scala:39)
+[error] 	at scala.runtime.AbstractFunction0.apply$mcV$sp(AbstractFunction0.scala:17)
+[error] 	at scala.App.$anonfun$main$1(App.scala:73)
+[error] 	at scala.App.$anonfun$main$1$adapted(App.scala:73)
+[error] 	at scala.collection.IterableOnceOps.foreach(IterableOnce.scala:553)
+[error] 	at scala.collection.IterableOnceOps.foreach$(IterableOnce.scala:551)
+[error] 	at scala.collection.AbstractIterable.foreach(Iterable.scala:921)
+[error] 	at scala.App.main(App.scala:73)
+[error] 	at scala.App.main$(App.scala:71)
+[error] 	at main$.main(preflow.scala:268)
+[error] 	at main.main(preflow.scala)
+[error] 	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+[error] 	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:77)
+[error] 	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+[error] 	at java.base/java.lang.reflect.Method.invoke(Method.java:568)
+[error] stack trace is suppressed; run 'last Compile / bgRun' for the full output
+
+[warn] Canceling execution...
+[warn] Run canceled.
