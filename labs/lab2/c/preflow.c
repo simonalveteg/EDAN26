@@ -474,8 +474,8 @@ void discharge(graph_t* g, node_t* u) {
   node_t* v; // node to send to.
   edge_t* e;
 
-  pr("Node %d discharge with ", id(g, u));
-	pr("h = %d and e = %d\n", u->h, u->e);
+  /*pr("Node %d discharge with ", id(g, u));*/
+	/*pr("h = %d and e = %d\n", u->h, u->e);*/
 
   while (neighbor != NULL) {
     // find direction in order to calculate remaining capacity of edge.
@@ -485,6 +485,8 @@ void discharge(graph_t* g, node_t* u) {
     e = neighbor->edge;
     neighbor = neighbor->next;
     
+    lock_nodes(u, v); // lock nodes in same order every time.
+    
     if (u == e->u) {
       b = 1;
       v = e->v;
@@ -492,11 +494,11 @@ void discharge(graph_t* g, node_t* u) {
       b = -1;
       v = e->u;
     }
-
-    lock_nodes(u, v); // lock nodes in same order every time.
     
-    if (u->e == 0) break;
-
+    if (u->e == 0) {
+      unlock_nodes(u, v);
+      break;
+    }
     if (u->h > v->h && e->f * b < e->c) {
       push(g, u, v, e);
     }
