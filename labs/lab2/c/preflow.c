@@ -27,6 +27,9 @@
  *
  */
  
+#include "timebase.h"
+#include <pthread.h>
+#include <stdbool.h>
 #include <assert.h>
 #include <ctype.h>
 #include <stdarg.h>
@@ -34,7 +37,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define PRINT		0	/* enable/disable prints. */
+#define THREAD_COUNT 8
+
+#define PRINT		1	/* enable/disable prints. */
 
 /* the funny do-while next clearly performs one iteration of the loop.
  * if you are really curious about why there is a loop, please check
@@ -76,6 +81,7 @@ struct node_t {
 	int		e;	/* excess flow.			*/
 	list_t*		edge;	/* adjacency list.		*/
 	node_t*		next;	/* with excess preflow.		*/
+  pthread_mutex_t mutex;
 };
 
 struct edge_t {
@@ -83,6 +89,7 @@ struct edge_t {
 	node_t*		v;	/* the other. 			*/
 	int		f;	/* flow > 0 if from u to v.	*/
 	int		c;	/* capacity.			*/
+  // mutex here?
 };
 
 struct graph_t {
@@ -93,6 +100,9 @@ struct graph_t {
 	node_t*		s;	/* source.			*/
 	node_t*		t;	/* sink.			*/
 	node_t*		excess;	/* nodes with e > 0 except s,t.	*/
+  pthread_mutex_t mutex;
+  pthread_cond_t cond;
+  int active_threads;
 };
 
 /* a remark about C arrays. the phrase above 'array of n nodes' is using
@@ -313,9 +323,17 @@ static graph_t* new_graph(FILE* in, int n, int m)
 	g->v = xcalloc(n, sizeof(node_t));
 	g->e = xcalloc(m, sizeof(edge_t));
 
+	pthread_mutex_init(&g->mutex, NULL);
+	pthread_cond_init(&g->cond, NULL);
+  g->active_threads = 0;
+
 	g->s = &g->v[0];
 	g->t = &g->v[n-1];
 	g->excess = NULL;
+
+  for (i = 0; i < n; i += 1) {
+		pthread_mutex_init(&g->v[i].mutex, NULL);
+	}
 
 	for (i = 0; i < m; i += 1) {
 		a = next_int();
@@ -339,11 +357,13 @@ static void enter_excess(graph_t* g, node_t* v)
 	 * it first is simplest.
 	 *
 	 */
-
+  pthread_mutex_lock(&g->mutex);
 	if (v != g->t && v != g->s) {
+    pr("Add node %d to excess list.\n", id(g,v));
 		v->next = g->excess;
 		g->excess = v;
 	}
+  pthread_mutex_unlock(&g->mutex);
 }
 
 static node_t* leave_excess(graph_t* g)
@@ -390,6 +410,7 @@ static void push(graph_t* g, node_t* u, node_t* v, edge_t* e)
 	assert(abs(e->f) <= e->c);
 
 	if (u->e > 0) {
+    pr("Node %d still has excess.\n", id(g,u));
 
 		/* still some remaining so let u push more. */
 
@@ -397,6 +418,7 @@ static void push(graph_t* g, node_t* u, node_t* v, edge_t* e)
 	}
 
 	if (v->e == d) {
+    pr("Node %d now has excess.\n", id(g,v));
 
 		/* since v has d excess now it had zero before and
 		 * can now push.
@@ -423,6 +445,103 @@ static node_t* other(node_t* u, edge_t* e)
 	else
 		return e->u;
 }
+
+void unlock_nodes(node_t* u, node_t* v) {
+  if (u < v) {
+    pthread_mutex_unlock(&u->mutex);
+    pthread_mutex_unlock(&v->mutex);
+  } else {
+    pthread_mutex_unlock(&v->mutex);
+    pthread_mutex_unlock(&u->mutex);
+  }
+}
+
+void lock_nodes(node_t* u, node_t* v) {
+  if (u < v) {
+    pthread_mutex_lock(&u->mutex);
+    pthread_mutex_lock(&v->mutex);
+  } else {
+    pthread_mutex_lock(&v->mutex);
+    pthread_mutex_lock(&u->mutex);
+  }
+}
+
+void discharge(graph_t* g, node_t* u) {
+  list_t* neighbor = u->edge;
+  int b; // direction of flow.
+  node_t* v; // node to send to.
+  edge_t* e;
+
+  pr("Node %d discharge with ", id(g, u));
+	pr("h = %d and e = %d\n", u->h, u->e);
+
+  while (neighbor != NULL) {
+    // find direction in order to calculate remaining capacity of edge.
+    // lock mutex of nodes in correct order.
+    // push if edge has capacity remaining.
+    // remove edge from list.
+    e = neighbor->edge;
+    neighbor = neighbor->next;
+    
+    if (u == e->u) {
+      b = 1;
+      v = e->v;
+    } else {
+      b = -1;
+      v = e->u;
+    }
+
+    lock_nodes(u, v); // lock nodes in same order every time.
+    
+    if (u->e == 0) break;
+
+    if (u->h > v->h && e->f * b < e->c) {
+      push(g, u, v, e);
+    }
+    
+    unlock_nodes(u, v);
+  }
+
+  // List now empty, if excess remaining -> relabel and call discharge again.
+  if (u->e > 0) {
+    pr("Node %d excess remaining %d, relabel.\n", id(g,u), u->e);
+    relabel(g, u);
+    discharge(g, u);
+  }
+}
+
+void* thread_main(void *arg) 
+{
+  node_t* u;
+  graph_t *g = (graph_t *)arg;
+	pr("Thread initialized.\n");
+  /* Find node with excess, push until empty. */
+  while (true) {
+    pthread_mutex_lock(&g->mutex);
+    // If no node has excess, wait until one has.
+    while ((u = leave_excess(g)) == NULL) {
+      // if no threads are active, terminate thread.
+      pr("Thread has no node. Active Threads: %d\n", g->active_threads);
+      if (g->active_threads == 0) {
+        pr("Thread done.\n");
+        pthread_mutex_unlock(&g->mutex);
+        return (void*)NULL;
+      }
+      pthread_cond_wait(&g->cond, &g->mutex);
+    }
+    g->active_threads += 1;
+
+    pr("Activating thread for node %d, now: %d\n", id(g,u),g->active_threads);
+    pthread_mutex_unlock(&g->mutex);
+    discharge(g, u);
+    
+    pthread_mutex_lock(&g->mutex);
+    g->active_threads -= 1;
+    pr("Deactivating thread, now: %d\n", g->active_threads);
+    pthread_cond_broadcast(&g->cond);
+    pthread_mutex_unlock(&g->mutex);
+  }
+}
 	
 int preflow(graph_t* g)
 {
@@ -431,7 +550,8 @@ int preflow(graph_t* g)
 	node_t*		v;
 	edge_t*		e;
 	list_t*		p;
-	int		b;
+	int		    i;
+  pthread_t threads[THREAD_COUNT];
 
 	s = g->s;
 	s->h = g->n;
@@ -450,50 +570,14 @@ int preflow(graph_t* g)
 		s->e += e->c;
 		push(g, s, other(s, e), e);
 	}
-	
-	/* then loop until only s and/or t have excess preflow. */
-
-	while ((u = leave_excess(g)) != NULL) {
-
-		/* u is any node with excess preflow. */
-
-		pr("selected u = %d with ", id(g, u));
-		pr("h = %d and e = %d\n", u->h, u->e);
-
-		/* if we can push we must push and only if we could
-		 * not push anything, we are allowed to relabel.
-		 *
-		 * we can push to multiple nodes if we wish but
-		 * here we just push once for simplicity.
-		 *
-		 */
-
-		v = NULL;
-		p = u->edge;
-
-		while (p != NULL) {
-			e = p->edge;
-			p = p->next;
-
-			if (u == e->u) {
-				v = e->v;
-				b = 1;
-			} else {
-				v = e->u;
-				b = -1;
-			}
-
-			if (u->h > v->h && b * e->f < e->c)
-				break;
-			else
-				v = NULL;
-		}
-
-		if (v != NULL)
-			push(g, u, v, e);
-		else
-			relabel(g, u);
-	}
+	/* create threads. */
+  for (i = 0; i < THREAD_COUNT; i++) {
+    pthread_create(&threads[i], NULL, thread_main, g);
+  }
+  /* wait for threads to be done. */
+  for (i = 0; i < THREAD_COUNT; i++) {
+    pthread_join(threads[i], NULL);
+  }
 
 	return g->t->e;
 }
