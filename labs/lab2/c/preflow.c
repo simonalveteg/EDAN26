@@ -377,8 +377,10 @@ static node_t* leave_excess(graph_t* g)
 
 	v = g->excess;
 
-	if (v != NULL)
+	if (v != NULL) {
+    pr("Remove node %d from excess list.\n", id(g,v));
 		g->excess = v->next;
+  }
 
 	return v;
 }
@@ -506,7 +508,7 @@ void discharge(graph_t* g, node_t* u) {
   if (u->e > 0) {
     pr("Node %d excess remaining %d, relabel.\n", id(g,u), u->e);
     relabel(g, u);
-    discharge(g, u);
+    /*discharge(g, u);*/
   }
 }
 
