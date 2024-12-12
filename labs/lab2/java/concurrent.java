@@ -38,14 +38,10 @@ class Graph {
             globalLock.lock();
             node.next = excessListHead;
             excessListHead = node;
+            // Signal one waiting thread that there is work to do
+        
             globalLock.unlock();
         }
-    }
-
-    Node removeExcessNode(){
-        Node temp = excessListHead;
-        excessListHead = (excessListHead == null ? null : excessListHead.next);
-        return temp;
     }
 
     // Given an edge and a node, return the opposite endpoint of that edge
@@ -89,6 +85,10 @@ class Graph {
         assert(u.excessFlow >= 0);
         assert(Math.abs(e.flow) <= e.capacity);
 
+        // If u still has excess flow, add it back to the excess list
+        if (u.excessFlow > 0) {
+            addExcessNode(u);
+        }
 
         // If v just gained excess flow equal to flowPushAmount from zero, add it to the excess list
         if (v.excessFlow == flowPushAmount) {
@@ -96,30 +96,8 @@ class Graph {
         }
     }
 
-    void lockNodes(Node u, Node v){
-        // Lock the nodes in order based on their indices to avoid deadlock
-        if (u.index < v.index) {
-            u.nodeLock.lock();
-            v.nodeLock.lock();
-        } else {
-            v.nodeLock.lock();
-            u.nodeLock.lock();
-        }
-    }
-
-    void unlockNodes(Node u, Node v){
-        // Lock the nodes in order based on their indices to avoid deadlock
-        if (u.index < v.index) {
-            u.nodeLock.unlock();
-            v.nodeLock.unlock();
-        } else {
-            v.nodeLock.unlock();
-            u.nodeLock.unlock();
-        }
-    }
-
     // Try to push flow from node u. If no push is possible, relabel the node
-    void discharge(Node u) {
+    void dispatch(Node u) {
         Iterator<Edge> edgeIterator = u.adjacencyList.listIterator();
         Node v = null;
         Edge currentEdge = null;
@@ -138,21 +116,33 @@ class Graph {
                 directionFlag = -1;
             }
 
-            lockNodes(u, v);
+            // Lock the nodes in order based on their indices to avoid deadlock
+            if (u.index < v.index) {
+                u.nodeLock.lock();
+                v.nodeLock.lock();
+            } else {
+                v.nodeLock.lock();
+                u.nodeLock.lock();
+            }
 
             // Check if the "height" condition for pushing is satisfied and capacity is available
-            if(u.excessFlow == 0){
-                unlockNodes(u,v);
+            if (u.height > v.height && directionFlag * currentEdge.flow < currentEdge.capacity) {
+                // Found an edge through which we can push flow
                 break;
+            } else {
+                // Release locks if this edge doesn't work
+                u.nodeLock.unlock();
+                v.nodeLock.unlock();
+                v = null;
             }
-            if(u.height > v.height && currentEdge.flow * directionFlag < currentEdge.capacity){
-                pushFlow(u, v, currentEdge);
-            }
-
-            unlockNodes(u,v);
         }
 
-        if(u.excessFlow > 0){
+        // If we found a valid edge (v is not null), push flow. Otherwise, relabel u.
+        if (v != null) {
+            pushFlow(u, v, currentEdge);
+            u.nodeLock.unlock();
+            v.nodeLock.unlock();
+        } else {
             relabelNode(u);
         }
     }
@@ -162,15 +152,19 @@ class Graph {
         Node u;
         while (true) {
             globalLock.lock();
+            u = excessListHead;
+            excessListHead = (excessListHead == null ? null : excessListHead.next);
 
             // If no excess node is available, wait for one unless all threads are idle and done
-            while ((u = removeExcessNode()) == null) {
+            while (u == null) {
                 if (activeThreadCount == 0) {
                     globalLock.unlock();
                     return; // No more work, exit the thread
                 }
 
                 conditionForWork.await();
+                u = excessListHead;
+                excessListHead = (excessListHead == null ? null : excessListHead.next);
             }
 
             // Mark that this thread is now active
@@ -178,7 +172,7 @@ class Graph {
             globalLock.unlock();
 
             // Process the node u
-            discharge(u);
+            dispatch(u);
 
             // After done processing, mark the thread as inactive and signal any waiting threads
             globalLock.lock();
@@ -204,9 +198,9 @@ class Graph {
         }
 
         activeThreadCount = 0;
-        Thread[] workerThreads = new Thread[20]; // Using 10 worker threads
+        Thread[] workerThreads = new Thread[10]; // Using 10 worker threads
 
-        for (int i = 0; i < 20; i++) {
+        for (int i = 0; i < 10; i++) {
             workerThreads[i] = new Thread(new Runnable() {
                 public void run() {
                     try {
@@ -301,4 +295,3 @@ class Preflow {
         System.out.println("f = " + maxFlow);
     }
 }
-
