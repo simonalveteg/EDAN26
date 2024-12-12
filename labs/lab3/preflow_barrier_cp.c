@@ -474,7 +474,7 @@ cmd_list_t* get_command(graph_t* g, node_t* u) // Previously dispatch
 	list_t* p;
 	int		b;
 
-	cmd_list_t* c_list = malloc(sizeof(cmd_list_t));
+	cmd_list_t* c_list = calloc(1, sizeof(cmd_list_t));
 	pr("selected u = %d with ", id(g, u));
 	pr("h = %d and e = %d\n", u->h, u->e);
 
@@ -601,10 +601,10 @@ void* push_thread(void* arg)
 		
 		while (c != NULL) {
 			execute(g, c);
-			command_t* to_rm = c;
 			c = c->next;
-			//free(to_rm);
 		}
+
+
 
 		g->cmds = NULL;
 
