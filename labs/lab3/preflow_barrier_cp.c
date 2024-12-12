@@ -434,7 +434,7 @@ static void push(graph_t* g, node_t* u, node_t* v, edge_t* e)
 
 		/* still some remaining so let u push more. */
 
-		enter_excess(g, u);
+		//enter_excess(g, u);
 	}
 
 	if (v->e == d) {
@@ -510,6 +510,7 @@ cmd_list_t* get_command(graph_t* g, node_t* u) // Previously dispatch
 		}
 		
 		if (u->h > v->h && b * e->f < e->c) {
+			pr("Sending push command\n");
 			command_t* c = malloc(sizeof(command_t));
 			c->e = e;
 			c->u = u;
@@ -523,7 +524,7 @@ cmd_list_t* get_command(graph_t* g, node_t* u) // Previously dispatch
 		}
 	}
 
-	if (c_list == NULL){
+	if (c_list->head == NULL){
 		// Send relabel command
 		command_t* c = malloc(sizeof(command_t));
 		pr("Sending relabel command\n");
@@ -570,11 +571,13 @@ void* push_thread(void* arg)
 
 			pthread_mutex_lock(&g->mutex);
 			if (new_c != NULL) {
-				new_c->tail->next = g->cmds->head;
-				g->cmds->head = new_c->head;
-				if(g->cmds->tail == NULL){
-					g->cmds->tail = new_c->tail;
+				if(g->cmds != NULL){
+					new_c->tail->next = g->cmds->head;
+					g->cmds->head = new_c->head;
+				}else{
+					g->cmds= new_c;
 				}
+				
 			}
 			pthread_mutex_unlock(&g->mutex);
 		}
@@ -600,7 +603,7 @@ void* push_thread(void* arg)
 			execute(g, c);
 			command_t* to_rm = c;
 			c = c->next;
-			free(to_rm);
+			//free(to_rm);
 		}
 
 		g->cmds = NULL;
