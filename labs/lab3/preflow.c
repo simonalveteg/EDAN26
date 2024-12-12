@@ -24,7 +24,8 @@ typedef struct graph_t	graph_t;
 typedef struct node_t	node_t;
 typedef struct edge_t	edge_t;
 typedef struct list_t	list_t;
-
+typedef struct command_t command_t;
+typedef struct args_t   args_t;
 struct list_t {
 	edge_t*		edge;
 	list_t*		next;
@@ -205,7 +206,6 @@ static void enter_excess(graph_t* g, node_t* v)
 		v->next = g->excess;
 		g->excess = v;
 	}
-  pthread_cond_signal(&g->cond);
   pthread_mutex_unlock(&g->mutex);
 }
 
@@ -259,7 +259,7 @@ static void push(graph_t* g, node_t* u, node_t* v, edge_t* e)
 
 		/* still some remaining so let u push more. */
 
-		enter_excess(g, u);
+		/*enter_excess(g, u);*/
 	}
 
 	if (v->e == d) {
@@ -342,20 +342,23 @@ void discharge(graph_t* g, node_t* u) {
 
     pr("Discharge node %d, e %d, h %d, to neighbor %d, h %d\n", id(g, u), u->e, u->h, id(g, v), v->h);
     
-    if (u->h > v->h && e->f * b < e->c) {
-      break;
-    } else {
+    if (u->e == 0) {
       unlock_nodes(u, v);
-      v = NULL;
+      pr("No excess! Exit discharge.\n");
+      break;
     }
+    if (u->h > v->h && e->f * b < e->c) {
+      push(g, u, v, e);
+    }
+    
+    unlock_nodes(u, v);
   }
 
-  if (v != NULL) {
-    push(g, u, v, e);
-    unlock_nodes(u, v);
-  } else {
+  // List now empty, if excess remaining -> relabel and call discharge again.
+  if (u->e > 0) {
     pr("Node %d excess remaining %d, relabel.\n", id(g,u), u->e);
     relabel(g, u);
+    /*discharge(g, u);*/
   }
 }
 
