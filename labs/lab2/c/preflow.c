@@ -205,6 +205,7 @@ static void enter_excess(graph_t* g, node_t* v)
 		v->next = g->excess;
 		g->excess = v;
 	}
+  pthread_cond_signal(&g->cond);
   pthread_mutex_unlock(&g->mutex);
 }
 
@@ -258,7 +259,7 @@ static void push(graph_t* g, node_t* u, node_t* v, edge_t* e)
 
 		/* still some remaining so let u push more. */
 
-		/*enter_excess(g, u);*/
+		enter_excess(g, u);
 	}
 
 	if (v->e == d) {
@@ -341,23 +342,20 @@ void discharge(graph_t* g, node_t* u) {
 
     pr("Discharge node %d, e %d, h %d, to neighbor %d, h %d\n", id(g, u), u->e, u->h, id(g, v), v->h);
     
-    if (u->e == 0) {
-      unlock_nodes(u, v);
-      pr("No excess! Exit discharge.\n");
-      break;
-    }
     if (u->h > v->h && e->f * b < e->c) {
-      push(g, u, v, e);
+      break;
+    } else {
+      unlock_nodes(u, v);
+      v = NULL;
     }
-    
-    unlock_nodes(u, v);
   }
 
-  // List now empty, if excess remaining -> relabel and call discharge again.
-  if (u->e > 0) {
+  if (v != NULL) {
+    push(g, u, v, e);
+    unlock_nodes(u, v);
+  } else {
     pr("Node %d excess remaining %d, relabel.\n", id(g,u), u->e);
     relabel(g, u);
-    /*discharge(g, u);*/
   }
 }
 
