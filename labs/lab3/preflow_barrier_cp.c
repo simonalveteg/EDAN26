@@ -486,8 +486,10 @@ cmd_list_t* get_command(graph_t* g, node_t* u) // Previously dispatch
 		*
 		*/
 
-	if (u->e == 0)
+	if (u->e == 0){
+		free(c_list);
 		return NULL;
+	}
 
 	v = NULL;
 	p = u->edge;
@@ -526,7 +528,7 @@ cmd_list_t* get_command(graph_t* g, node_t* u) // Previously dispatch
 
 	if (c_list->head == NULL){
 		// Send relabel command
-		command_t* c = malloc(sizeof(command_t));
+		command_t* c = calloc(1, sizeof(command_t));
 		pr("Sending relabel command\n");
 		c->push = 0;
 		c->u = u;
@@ -559,7 +561,7 @@ void* push_thread(void* arg)
 	int      b;
 	int 	 start = args->start;
 	int 	 stop = args->stop;
-
+	free(args);
 	while (!g->done) {
 		// Fas 1
 		pr("Fas 1\n");
@@ -569,17 +571,20 @@ void* push_thread(void* arg)
 			node_t* n = &g->v[i];
 			cmd_list_t* new_c = get_command(g, n);
 
-			pthread_mutex_lock(&g->mutex);
+			
 			if (new_c != NULL) {
+				pthread_mutex_lock(&g->mutex);
 				if(g->cmds != NULL){
 					new_c->tail->next = g->cmds->head;
 					g->cmds->head = new_c->head;
+					free(new_c);
 				}else{
 					g->cmds= new_c;
 				}
-				
+				pthread_mutex_unlock(&g->mutex);
 			}
-			pthread_mutex_unlock(&g->mutex);
+			
+			
 		}
 
 		int resp = pthread_barrier_wait(&g->barrier);
@@ -599,13 +604,17 @@ void* push_thread(void* arg)
 
 		command_t* c = g->cmds->head;
 		
-		while (c != NULL) {
+		while (g->cmds != NULL && c != NULL) {
 			execute(g, c);
 			c = c->next;
 		}
-
-
-
+		c = g->cmds->head;
+		while (g->cmds != NULL && c != NULL) {
+			command_t* temp = c;
+			c = c->next;
+			free(temp);
+		}
+		free(g->cmds);
 		g->cmds = NULL;
 
 		pthread_barrier_wait(&g->barrier);
@@ -673,7 +682,7 @@ int preflow(graph_t* g, int thread_amount)
 	for (int i = 0; i < g->n; i++) {
 		pr("@%d: e=%d, h=%d\n", id(g, &g->v[i]), g->v[i].e, g->v[i].h);
 	}
-
+	//free(args);
 	return g->t->e;
 }
 
