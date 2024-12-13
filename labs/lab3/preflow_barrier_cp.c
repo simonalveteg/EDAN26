@@ -469,7 +469,7 @@ static void free_graph(graph_t* g)
 	free(g);
 }
 
-int smain(int argc, char* argv[])
+int main(int argc, char* argv[])
 {
 	FILE*		in;	/* input file set to stdin	*/
 	graph_t*	g;	/* undirected graph. 		*/
