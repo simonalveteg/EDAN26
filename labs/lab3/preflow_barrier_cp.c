@@ -108,6 +108,7 @@ struct graph_t {
 
 struct command_t {
 	int		push;
+  int     d; // how much to push
 	node_t*	u;
 	node_t* v;
 	edge_t* e;
@@ -367,85 +368,25 @@ static graph_t* new_graph(FILE* in, int n, int m)
 	return g;
 }
 
-static void enter_excess(graph_t* g, node_t* v)
+static void push(graph_t* g, node_t* u, node_t* v, edge_t* e, int d)
 {
-	/* put v at the front of the list of nodes
-	 * that have excess preflow > 0.
-	 *
-	 * note that for the algorithm, this is just
-	 * a set of nodes which has no order but putting it
-	 * it first is simplest.
-	 *
-	 */
-
-	if (v != g->t && v != g->s) {
-		pthread_mutex_lock(&g->mutex);
-		v->next = g->excess;
-		g->excess = v;
-		pthread_cond_signal(&g->cond);
-		pthread_mutex_unlock(&g->mutex);
-	}
-}
-
-static node_t* leave_excess(graph_t* g)
-{
-	node_t*		v;
-
-	/* take any node from the set of nodes with excess preflow
-	 * and for simplicity we always take the first.
-	 *
-	 */
-
-	v = g->excess;
-
-	if (v != NULL)
-		g->excess = v->next;
-
-	return v;
-}
-
-static void push(graph_t* g, node_t* u, node_t* v, edge_t* e)
-{
-	int		d;	/* remaining capacity of the edge. */
-
 	pr("push from %d to %d: ", id(g, u), id(g, v));
 	pr("f = %d, c = %d, so ", e->f, e->c);
 	
-	if (u == e->u) {
-		d = MIN(u->e, e->c - e->f);
-		e->f += d;
-	} else {
-		d = MIN(u->e, e->c + e->f);
-		e->f -= d;
-	}
+	pr("pushing %d\n", abs(d));
 
-	pr("pushing %d\n", d);
 
-	u->e -= d;
-	v->e += d;
+  u->e -= abs(d);
+  v->e += abs(d);
+  e->f += d;
+  pr("  f = %d, c = %d, \n", e->f, e->c);
+  pr("  node %d now e = %d\n", id(g, u), u->e);
+  pr("  node %d now e = %d\n", id(g, v), v->e);
 
 	/* the following are always true. */
 
-	assert(d >= 0);
-	assert(u->e >= 0);
+	assert(u == g->s || u->e >= 0);
 	assert(abs(e->f) <= e->c);
-
-	if (u->e > 0) {
-
-		/* still some remaining so let u push more. */
-
-		//enter_excess(g, u);
-	}
-
-	if (v->e == d) {
-
-		/* since v has d excess now it had zero before and
-		 * can now push.
-		 *
-		 */
-
-		enter_excess(g, v);
-	}
 }
 
 static void relabel(graph_t* g, node_t* u)
@@ -455,8 +396,6 @@ static void relabel(graph_t* g, node_t* u)
 	pthread_mutex_unlock(&u->mutex);
 
 	pr("relabel %d now h = %d\n", id(g, u), u->h);
-
-	enter_excess(g, u);
 }
 
 static node_t* other(node_t* u, edge_t* e)
@@ -472,7 +411,8 @@ cmd_list_t* get_command(graph_t* g, node_t* u) // Previously dispatch
 	node_t* v;
 	edge_t* e;
 	list_t* p;
-	int		b;
+	int		b, d;
+  int remaining_excess = u->e;
 
 	cmd_list_t* c_list = calloc(1, sizeof(cmd_list_t));
 	pr("selected u = %d with ", id(g, u));
@@ -506,7 +446,7 @@ cmd_list_t* get_command(graph_t* g, node_t* u) // Previously dispatch
 			b = -1;
 		}
 
-		if (u->e == 0) {
+		if (remaining_excess == 0) {
 			pr("No excess! Exit discharge.\n");
 			break;
 		}
@@ -514,6 +454,13 @@ cmd_list_t* get_command(graph_t* g, node_t* u) // Previously dispatch
 		if (u->h > v->h && b * e->f < e->c) {
 			pr("Sending push command\n");
 			command_t* c = malloc(sizeof(command_t));
+      if (u == e->u) {
+        d = MIN(remaining_excess, e->c - e->f);
+      } else {
+        d = -MIN(remaining_excess, e->c + e->f);
+      }
+      remaining_excess -= abs(d);
+      c->d = d;
 			c->e = e;
 			c->u = u;
 			c->v = v;
@@ -547,7 +494,7 @@ void execute(graph_t* g, command_t* c)
 		relabel(g, c->u);
 	} else {
 		pr("Executing push for u=%d (e=%d), v=%d\n", id(g, c->u), c->u->e, id(g, c->v));
-		push(g, c->u, c->v, c->e);
+		push(g, c->u, c->v, c->e, c->d);
 	}
 }
 
@@ -645,8 +592,7 @@ int preflow(graph_t* g, int thread_amount)
 		e = p->edge;
 		p = p->next;
 
-		s->e += e->c;
-		push(g, s, other(s, e), e);
+		push(g, s, other(s, e), e, e->c);
 	}
 
 	/* then loop until only s and/or t have excess preflow. */
