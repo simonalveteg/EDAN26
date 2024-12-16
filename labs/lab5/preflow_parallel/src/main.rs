@@ -127,7 +127,7 @@ fn main() {
 	let m: usize = read!();		/* m edges.						*/
 	let _c: usize = read!();	/* underscore avoids warning about an unused variable.	*/
 	let _p: usize = read!();	/* c and p are in the input from 6railwayplanning.	*/
-	let num_threads = 4;
+	let num_threads = 8;
 	let mut threads = vec![];
 	let mut node = vec![];
 	let mut edge = vec![];

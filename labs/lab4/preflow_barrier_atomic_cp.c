@@ -33,8 +33,8 @@ struct list_t {
 
 struct node_t {
 	int		h;	/* height.			*/
-	_Atomic int		e;	/* excess flow.			*/
-	_Atomic int temp_e;
+	atomic_int		e;	/* excess flow.			*/
+	atomic_int temp_e;
 	list_t*		edge;	/* adjacency list.		*/
 	node_t*		next;	/* with excess preflow.		*/
     pthread_mutex_t mutex; /* mutex for node */
@@ -44,7 +44,7 @@ struct node_t {
 struct edge_t {
 	node_t*		u;	/* one of the two nodes.	*/
 	node_t*		v;	/* the other. 			*/
-	_Atomic int		f;	/* flow > 0 if from u to v.	*/
+	atomic_int		f;	/* flow > 0 if from u to v.	*/
 	int		c;	/* capacity.			*/
 };
 
@@ -52,7 +52,7 @@ struct graph_t {
 	int		n;	/* nodes.			*/
 	int		m;	/* edges.			*/
 	int		done;
-	int 	pushed_last;
+	atomic_int 	pushed_last;
 	node_t*		v;	/* array of n nodes.		*/
 	edge_t*		e;	/* array of m edges.		*/
 	node_t*		s;	/* source.			*/
@@ -212,13 +212,16 @@ static void push(graph_t* g, node_t* u, node_t* v, edge_t* e)
 	
 
 	if (u == e->u) {
-		d = MIN(u->e, e->c - e->f);
+		d = MIN(u->e, e->c - atomic_load_explicit(&e->f, memory_order_relaxed));
+		
 		pr("push from %d to %d: f = %d, c = %d, so pushing %d\n", id(g, u), id(g, v), e->f, e->c, d);
-		e->f += d;
+		//e->f += d;
+		atomic_fetch_add_explicit(&e->f, d, memory_order_acq_rel);
 	} else {
-		d = MIN(u->e, e->c + e->f);
+		d = MIN(u->e, e->c + atomic_load_explicit(&e->f, memory_order_relaxed));
 		pr("push from %d to %d: f = %d, c = %d, so pushing %d\n", id(g, u), id(g, v), e->f, e->c, d);
-		e->f -= d;
+		//e->f -= d;
+		atomic_fetch_sub_explicit(&e->f, d, memory_order_acq_rel);
 	}
 	
 	u->e -= d;
@@ -256,6 +259,7 @@ command_t* get_command(graph_t* g, node_t* u) // Previously dispatch
 	pr("Sel u = %d h = %d, e = %d\n", id(g, u), u->h, u->e);
 
 	if (u->e == 0){
+		free(c);
 		return NULL;
 	}
 
@@ -281,8 +285,10 @@ command_t* get_command(graph_t* g, node_t* u) // Previously dispatch
 		
 		if (u->h > v->h && b * e->f < e->c) {
 			pr("Sending push command\n");
+			//pthread_mutex_lock(&g->mutex);
 			push(g, u, v, e);
-			g->pushed_last = 1;
+			g->pushed_last += 1;
+			//pthread_mutex_unlock(&g->mutex);
 		}
 	}
 
@@ -292,6 +298,7 @@ command_t* get_command(graph_t* g, node_t* u) // Previously dispatch
 		c->u = u;
 		return c;
 	}else{
+		free(c);
 		return NULL;
 	}
 
@@ -345,6 +352,12 @@ void* push_thread(void* arg)
 		while (c != NULL) {
 			relabel(g, c->u);
 			c = c->next;
+		}
+		c = g->cmds;
+		while (c != NULL) {
+			command_t* temp = c;
+			c = c->next;
+			free(temp);
 		}
 
 		g->cmds = NULL;
