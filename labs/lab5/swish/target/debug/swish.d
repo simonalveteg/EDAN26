@@ -1,1 +1,1 @@
-/home/js/Tresors/edan26/labs/lab5/swish/target/debug/swish: /home/js/Tresors/edan26/labs/lab5/swish/src/main.rs
+/home/sailor/git/EDAN26/labs/lab5/swish/target/debug/swish: /home/sailor/git/EDAN26/labs/lab5/swish/src/main.rs
