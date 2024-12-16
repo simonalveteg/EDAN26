@@ -70,6 +70,6 @@ fn main() {
 	} else {
 		println!("FAIL");
 	}
-	
-	
+
+
 }
